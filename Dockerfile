@@ -1,4 +1,4 @@
-FROM debian:stretch as builder
+FROM debian:stretch as builderc
 
 # Fluent Bit version
 ENV FLB_MAJOR 1
@@ -40,7 +40,7 @@ RUN cmake -DFLB_DEBUG=Off \
           -DFLB_OUT_KAFKA=On ..
 
 RUN make -j $(getconf _NPROCESSORS_ONLN)
-RUN install bin/fluent-bit /fluent-bit/bin/
+RUN install bin/fluent-bit /fluent-bit/bin/fluent-bit-core
 
 # Configuration files
 COPY conf/fluent-bit.conf \
@@ -52,25 +52,32 @@ COPY conf/fluent-bit.conf \
      conf/plugins.conf \
      /fluent-bit/etc/
 
+FROM golang:1.13.6-alpine3.11 as buildergo
+RUN mkdir -p /fluent-bit
+COPY main.go go.mod /fluent-bit/
+WORKDIR /fluent-bit
+RUN CGO_ENABLED=0 go build -o fluent-bit main.go
+
 FROM gcr.io/distroless/cc
-MAINTAINER Eduardo Silva <eduardo@treasure-data.com>
-LABEL Description="Fluent Bit docker image" Vendor="Fluent Organization" Version="1.1"
+MAINTAINER KubeSphere <kubesphere@yunify.com>
+LABEL Description="Fluent Bit docker image" Vendor="KubeSphere Organization" Version="1.0"
 
-COPY --from=builder /usr/lib/x86_64-linux-gnu/*sasl* /usr/lib/x86_64-linux-gnu/
-COPY --from=builder /usr/lib/x86_64-linux-gnu/libz* /usr/lib/x86_64-linux-gnu/
-COPY --from=builder /lib/x86_64-linux-gnu/libz* /lib/x86_64-linux-gnu/
-COPY --from=builder /usr/lib/x86_64-linux-gnu/libssl.so* /usr/lib/x86_64-linux-gnu/
-COPY --from=builder /usr/lib/x86_64-linux-gnu/libcrypto.so* /usr/lib/x86_64-linux-gnu/
+COPY --from=builderc /usr/lib/x86_64-linux-gnu/*sasl* /usr/lib/x86_64-linux-gnu/
+COPY --from=builderc /usr/lib/x86_64-linux-gnu/libz* /usr/lib/x86_64-linux-gnu/
+COPY --from=builderc /lib/x86_64-linux-gnu/libz* /lib/x86_64-linux-gnu/
+COPY --from=builderc /usr/lib/x86_64-linux-gnu/libssl.so* /usr/lib/x86_64-linux-gnu/
+COPY --from=builderc /usr/lib/x86_64-linux-gnu/libcrypto.so* /usr/lib/x86_64-linux-gnu/
 # These below are all needed for systemd
-COPY --from=builder /lib/x86_64-linux-gnu/libsystemd* /lib/x86_64-linux-gnu/
-COPY --from=builder /lib/x86_64-linux-gnu/libselinux.so* /lib/x86_64-linux-gnu/
-COPY --from=builder /lib/x86_64-linux-gnu/liblzma.so* /lib/x86_64-linux-gnu/
-COPY --from=builder /usr/lib/x86_64-linux-gnu/liblz4.so* /usr/lib/x86_64-linux-gnu/
-COPY --from=builder /lib/x86_64-linux-gnu/libgcrypt.so* /lib/x86_64-linux-gnu/
-COPY --from=builder /lib/x86_64-linux-gnu/libpcre.so* /lib/x86_64-linux-gnu/
-COPY --from=builder /lib/x86_64-linux-gnu/libgpg-error.so* /lib/x86_64-linux-gnu/
+COPY --from=builderc /lib/x86_64-linux-gnu/libsystemd* /lib/x86_64-linux-gnu/
+COPY --from=builderc /lib/x86_64-linux-gnu/libselinux.so* /lib/x86_64-linux-gnu/
+COPY --from=builderc /lib/x86_64-linux-gnu/liblzma.so* /lib/x86_64-linux-gnu/
+COPY --from=builderc /usr/lib/x86_64-linux-gnu/liblz4.so* /usr/lib/x86_64-linux-gnu/
+COPY --from=builderc /lib/x86_64-linux-gnu/libgcrypt.so* /lib/x86_64-linux-gnu/
+COPY --from=builderc /lib/x86_64-linux-gnu/libpcre.so* /lib/x86_64-linux-gnu/
+COPY --from=builderc /lib/x86_64-linux-gnu/libgpg-error.so* /lib/x86_64-linux-gnu/
 
-COPY --from=builder /fluent-bit /fluent-bit
+COPY --from=builderc /fluent-bit /fluent-bit
+COPY --from=buildergo /fluent-bit/fluent-bit /fluent-bit/bin/fluent-bit
 
 #
 EXPOSE 2020
