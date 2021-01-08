@@ -1,6 +1,6 @@
 
 # Image URL to use all building/pushing image targets
-IMG ?= kubespheredev/fluent-bit:v1.6.2
+IMG ?= leiwanjun/fluent-bit:v1.6.9
 AMD64 ?= -amd64
 
 all: image

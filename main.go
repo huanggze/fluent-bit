@@ -6,23 +6,34 @@ import (
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	"github.com/oklog/run"
+	"math"
 	"os"
 	"os/exec"
+	"sync"
 	"syscall"
+	"time"
 )
 
 const (
-	binPath  = "/fluent-bit/bin/fluent-bit"
-	cfgPath  = "/fluent-bit/etc/fluent-bit.conf"
-	watchDir = "/fluent-bit/config"
+	binPath      = "/fluent-bit/bin/fluent-bit"
+	cfgPath      = "/fluent-bit/etc/fluent-bit.conf"
+	watchDir     = "/fluent-bit/config"
+	MaxDelayTime = time.Minute * 5
+	ResetTime    = time.Minute * 10
 )
 
 var (
-	cmd *exec.Cmd
+	logger       log.Logger
+	cmd          *exec.Cmd
+	mutex        sync.Mutex
+	restartTimes int
+	timer        *time.Timer
 )
 
 func main() {
-	logger := log.NewLogfmtLogger(os.Stdout)
+	logger = log.NewLogfmtLogger(os.Stdout)
+
+	timer = time.NewTimer(0)
 
 	var g run.Group
 	{
@@ -42,28 +53,19 @@ func main() {
 					default:
 					}
 
-					if cmd == nil {
-						cmd = exec.Command(binPath, "-c", cfgPath)
-						cmd.Stdout = os.Stdout
-						cmd.Stderr = os.Stderr
-						if err := cmd.Start(); err != nil {
-							_ = level.Error(logger).Log("msg", "start Fluent bit error", "error", err)
-						}
-
-						_ = level.Info(logger).Log("msg", "Fluent bit started")
-					}
-
-					if cmd != nil {
-						_ = level.Error(logger).Log("msg", "Fluent bit exited", "error", cmd.Wait())
-						cmd = nil
-					}
+					// Start fluent bit if it does not existed.
+					startFluentbit()
+					// Wait for the fluent bit exit.
+					waitFluentbit()
+					// After the fluent bit exit, fluent bit watcher restarts it with an exponential
+					// back-off delay (1s, 2s, 4s, ...), that is capped at five minutes.
+					delay()
 				}
 			},
 			func(err error) {
 				close(cancel)
-				if cmd != nil {
-					_ = cmd.Process.Kill()
-				}
+				KillFluentbit()
+				resetTimer()
 			},
 		)
 	}
@@ -95,12 +97,11 @@ func main() {
 							continue
 						}
 
-						_ = level.Info(logger).Log("msg", "Config file changed")
-						_ = level.Info(logger).Log("msg", "Stop Fluent Bit")
-
-						if err := cmd.Process.Kill(); err != nil {
-							_ = level.Error(logger).Log("msg", "Stop Fluent Bit error", "error", err)
-						}
+						// After the config file changed, it should stop the fluent bit,
+						// and resets the restart backoff timer.
+						KillFluentbit()
+						resetTimer()
+						_ = level.Info(logger).Log("msg", "Config file changed, stop Fluent Bit")
 					case <-watcher.Errors:
 						_ = level.Error(logger).Log("msg", "Watcher stopped")
 						return nil
@@ -109,9 +110,6 @@ func main() {
 			},
 			func(err error) {
 				_ = watcher.Close()
-				if cmd != nil {
-					_ = cmd.Process.Kill()
-				}
 				close(cancel)
 			},
 		)
@@ -133,4 +131,85 @@ func isValidEvent(event fsnotify.Event) bool {
 	//	return false
 	//}
 	return true
+}
+
+func startFluentbit() {
+
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	if cmd != nil {
+		return
+	}
+
+	cmd = exec.Command(binPath, "-c", cfgPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		_ = level.Error(logger).Log("msg", "start Fluent bit error", "error", err)
+		cmd = nil
+		return
+	}
+
+	_ = level.Info(logger).Log("msg", "Fluent bit started")
+}
+
+func waitFluentbit() {
+
+	if cmd == nil {
+		return
+	}
+
+	startTime := time.Now()
+	_ = level.Error(logger).Log("msg", "Fluent bit exited", "error", cmd.Wait())
+	// Once the fluent bit has executed for 10 minutes without any problems,
+	// it should resets the restart backoff timer.
+	if time.Now().Sub(startTime) >= ResetTime {
+		restartTimes = 0
+	}
+
+	mutex.Lock()
+	cmd = nil
+	mutex.Unlock()
+}
+
+func delay() {
+
+	delayTime := time.Duration(math.Pow(2, float64(restartTimes))) * time.Second
+	if delayTime >= MaxDelayTime {
+		delayTime = MaxDelayTime
+	}
+	timer.Reset(delayTime)
+
+	startTime := time.Now()
+	<-timer.C
+	_ = level.Info(logger).Log("msg", "delay", "actual", time.Now().Sub(startTime), "expected", delayTime)
+	restartTimes = restartTimes + 1
+}
+
+func KillFluentbit() {
+
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+
+	if err := cmd.Process.Kill(); err != nil {
+		_ = level.Info(logger).Log("msg", "Kill Fluent Bit error", "error", err)
+	} else {
+		_ = level.Info(logger).Log("msg", "Killed Fluent Bit")
+	}
+}
+
+func resetTimer() {
+
+	if timer != nil {
+		if !timer.Stop() {
+			<-timer.C
+		}
+		timer.Reset(0)
+	}
+	restartTimes = 0
 }
