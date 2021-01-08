@@ -54,17 +54,17 @@ func main() {
 					}
 
 					// Start fluent bit if it does not existed.
-					startFluentbit()
+					start()
 					// Wait for the fluent bit exit.
-					waitFluentbit()
+					wait()
 					// After the fluent bit exit, fluent bit watcher restarts it with an exponential
 					// back-off delay (1s, 2s, 4s, ...), that is capped at five minutes.
-					delay()
+					backoff()
 				}
 			},
 			func(err error) {
 				close(cancel)
-				KillFluentbit()
+				stop()
 				resetTimer()
 			},
 		)
@@ -99,7 +99,7 @@ func main() {
 
 						// After the config file changed, it should stop the fluent bit,
 						// and resets the restart backoff timer.
-						KillFluentbit()
+						stop()
 						resetTimer()
 						_ = level.Info(logger).Log("msg", "Config file changed, stop Fluent Bit")
 					case <-watcher.Errors:
@@ -133,7 +133,7 @@ func isValidEvent(event fsnotify.Event) bool {
 	return true
 }
 
-func startFluentbit() {
+func start() {
 
 	mutex.Lock()
 	defer mutex.Unlock()
@@ -154,7 +154,7 @@ func startFluentbit() {
 	_ = level.Info(logger).Log("msg", "Fluent bit started")
 }
 
-func waitFluentbit() {
+func wait() {
 
 	if cmd == nil {
 		return
@@ -173,7 +173,7 @@ func waitFluentbit() {
 	mutex.Unlock()
 }
 
-func delay() {
+func backoff() {
 
 	delayTime := time.Duration(math.Pow(2, float64(restartTimes))) * time.Second
 	if delayTime >= MaxDelayTime {
@@ -187,7 +187,7 @@ func delay() {
 	restartTimes = restartTimes + 1
 }
 
-func KillFluentbit() {
+func stop() {
 
 	mutex.Lock()
 	defer mutex.Unlock()
