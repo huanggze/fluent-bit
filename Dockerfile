@@ -9,7 +9,7 @@ FROM fluent/fluent-bit:1.6.9
 MAINTAINER KubeSphere <kubesphere@yunify.com>
 LABEL Description="Fluent Bit docker image" Vendor="KubeSphere" Version="1.0"
 
-COPY conf/fluent-bit.conf /fluent-bit/etc/
+COPY conf/fluent-bit.conf conf/parsers.conf /fluent-bit/etc/
 COPY --from=buildergo /fluent-bit/fluent-bit /fluent-bit/bin/fluent-bit-watcher
 
 #

@@ -1,6 +1,7 @@
 FROM debian:stretch as builder
-COPY --from=amd64/busybox:1.31.0 /bin/busybox /bin/busybox
-COPY --from=amd64/busybox:1.31.0 /bin/chmod /bin/chmod
+COPY --from=busybox:1.31.0 /bin/busybox /bin/busybox
+COPY --from=busybox:1.31.0 /bin/sh /bin/sh
+COPY --from=busybox:1.31.0 /bin/chmod /bin/chmod
 RUN chmod 555 /bin/busybox \
  && /bin/busybox --install
 
